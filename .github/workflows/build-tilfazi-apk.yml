@@ -44,6 +44,12 @@ jobs:
           else
             gradle :app:assembleDebug :app:lintDebug --stacktrace
           fi
+      - name: Prepare unsigned non-debuggable release APK for secure offline signing
+        run: |
+          if [ -z "${TILFAZI_KEYSTORE_PATH:-}" ]; then
+            gradle :app:assembleRelease :app:lintRelease --stacktrace
+            test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          fi
       - name: Verify output
         run: |
           if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
@@ -74,6 +80,13 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "Tilfazi LIVE 3.3.1" --notes "Installable Android app, v3.3.1. Zee Alwan playback through the official STARZPLAY web player remains region/provider-dependent. Some channels require authorization. Debug-signed builds cannot upgrade over an APK signed by a different certificate."
           fi
+      - name: Save unsigned release build for secure local signing
+        if: env.TILFAZI_KEYSTORE_PATH == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tilfazi-LIVE-release-unsigned-for-private-signing
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: Tilfazi-LIVE-installable-apk
