@@ -35,6 +35,8 @@ jobs:
             find app/build -name 'lint-results-debug.txt' -print -exec cat {} \;
             exit 1
           fi
+      - name: Show Android lint report
+        run: find app/build -name 'lint-results-debug.txt' -print -exec cat {} \;
       - name: Verify signed APK and package
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
