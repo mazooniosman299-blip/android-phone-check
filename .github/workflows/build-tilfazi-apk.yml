@@ -1,4 +1,4 @@
-name: Build Tilfazi LIVE APK
+name: Build Android APK
 on:
   workflow_dispatch:
   push:
@@ -8,42 +8,53 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    env:
+      TILFAZI_SIGNING_STORE_B64: ${{ secrets.TILFAZI_SIGNING_STORE_B64 }}
+      TILFAZI_STORE_PASSWORD: ${{ secrets.TILFAZI_STORE_PASSWORD }}
+      TILFAZI_KEY_PASSWORD: ${{ secrets.TILFAZI_KEY_PASSWORD }}
+      TILFAZI_KEY_ALIAS: ${{ secrets.TILFAZI_KEY_ALIAS }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Unpack Android source
         run: tar -xJf project.tar.xz
-      - name: Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Check preinstalled Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
-          test -d "$ANDROID_HOME/build-tools/35.0.0" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
-      - name: Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Compile APK
-        run: gradle :app:assembleDebug --stacktrace
-      - name: Check Android lint
+      - name: Android SDK packages
         run: |
-          if ! gradle :app:lintDebug --stacktrace; then
-            find app/build -name 'lint-results-debug.txt' -print -exec cat {} \;
-            exit 1
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
+          test -d "$ANDROID_HOME/build-tools/35.0.0" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
+      - name: Local source tests
+        run: sh tests/run_all.sh
+      - name: Prepare stable release signing (only when all secrets are configured)
+        run: |
+          if [ -n "$TILFAZI_SIGNING_STORE_B64" ] && [ -n "$TILFAZI_STORE_PASSWORD" ] && [ -n "$TILFAZI_KEY_PASSWORD" ] && [ -n "$TILFAZI_KEY_ALIAS" ]; then
+            printf '%s' "$TILFAZI_SIGNING_STORE_B64" | base64 -d > "$RUNNER_TEMP/tilfazi-release.p12"
+            chmod 600 "$RUNNER_TEMP/tilfazi-release.p12"
+            echo "TILFAZI_KEYSTORE_PATH=$RUNNER_TEMP/tilfazi-release.p12" >> "$GITHUB_ENV"
           fi
-      - name: Show Android lint report
-        run: find app/build -name 'lint-results-debug.txt' -print -exec cat {} \;
-      - name: Verify signed APK and package
+      - name: Build signed release if signing secrets exist; otherwise diagnostic debug
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | head -n 8
-      - name: Save installable APK
-        uses: actions/upload-artifact@v4
+          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
+            gradle :app:assembleRelease :app:lintRelease --stacktrace
+          else
+            gradle :app:assembleDebug :app:lintDebug --stacktrace
+          fi
+      - name: Verify output
+        run: |
+          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
+            APK=app/build/outputs/apk/release/app-release.apk
+          else
+            APK=app/build/outputs/apk/debug/app-debug.apk
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 8
+      - uses: actions/upload-artifact@v4
         with:
-          name: Tilfazi-LIVE-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Tilfazi-LIVE-installable-apk
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
