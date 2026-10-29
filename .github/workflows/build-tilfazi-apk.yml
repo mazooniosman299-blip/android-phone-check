@@ -30,7 +30,11 @@ jobs:
       - name: Compile APK
         run: gradle :app:assembleDebug --stacktrace
       - name: Check Android lint
-        run: gradle :app:lintDebug --stacktrace
+        run: |
+          if ! gradle :app:lintDebug --stacktrace; then
+            find app/build -name 'lint-results-debug.txt' -print -exec cat {} \;
+            exit 1
+          fi
       - name: Verify signed APK and package
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
