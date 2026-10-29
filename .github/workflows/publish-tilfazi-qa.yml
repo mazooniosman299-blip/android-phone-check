@@ -1,0 +1,29 @@
+name: Publish Tilfazi LIVE 3.4.1 test APK
+on:
+  push:
+    branches: [tilfazi-3-4-1-download]
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble and verify APK before public download
+        run: |
+          set -euo pipefail
+          cat download-parts/part*.b64 | base64 -d > Tilfazi-LIVE-3.4.1-Test.apk
+          echo '6aca7221173824b67b3397c5551b19cbd7a4788e47ee9645779e6de1e58b26de  Tilfazi-LIVE-3.4.1-Test.apk' | sha256sum --check
+          unzip -t Tilfazi-LIVE-3.4.1-Test.apk > /dev/null
+      - name: Publish test APK as downloadable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=tilfazi-v3.4.1-test
+          APK=Tilfazi-LIVE-3.4.1-Test.apk
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --prerelease --title 'Tilfazi LIVE 3.4.1 — Zee Alwan test' --notes 'Experimental test APK. Zee Alwan playback in Oman is not verified. This APK uses the stable signing key from v3.3.1; older debug-signed installations may not accept an in-place upgrade.'
+          fi
