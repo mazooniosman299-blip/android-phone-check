@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Validate Tilfazi Android release
 on:
   workflow_dispatch:
   push:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
     env:
       TILFAZI_SIGNING_STORE_B64: ${{ secrets.TILFAZI_SIGNING_STORE_B64 }}
       TILFAZI_STORE_PASSWORD: ${{ secrets.TILFAZI_STORE_PASSWORD }}
@@ -15,7 +15,7 @@ jobs:
       TILFAZI_KEY_ALIAS: ${{ secrets.TILFAZI_KEY_ALIAS }}
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack Android source
+      - name: Extract project
         run: tar -xJf project.tar.xz
       - uses: actions/setup-java@v4
         with:
@@ -28,78 +28,56 @@ jobs:
         run: |
           test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
           test -d "$ANDROID_HOME/build-tools/35.0.0" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
-      - name: Local source tests
+      - name: Source tests
         run: sh tests/run_all.sh
-      - name: Prepare stable release signing (only when all secrets are configured)
+      - name: Require complete stable signing configuration
         run: |
-          if [ -n "$TILFAZI_SIGNING_STORE_B64" ] && [ -n "$TILFAZI_STORE_PASSWORD" ] && [ -n "$TILFAZI_KEY_PASSWORD" ] && [ -n "$TILFAZI_KEY_ALIAS" ]; then
+          set -euo pipefail
+          count=0
+          for value in "$TILFAZI_SIGNING_STORE_B64" "$TILFAZI_STORE_PASSWORD" "$TILFAZI_KEY_PASSWORD" "$TILFAZI_KEY_ALIAS"; do
+            if [ -n "$value" ]; then count=$((count + 1)); fi
+          done
+          if [ "$count" != 0 ] && [ "$count" != 4 ]; then
+            echo 'ERROR: configure all four signing secrets, or none for unsigned QA'
+            exit 1
+          fi
+          if [ "$count" = 4 ]; then
             printf '%s' "$TILFAZI_SIGNING_STORE_B64" | base64 -d > "$RUNNER_TEMP/tilfazi-release.p12"
             chmod 600 "$RUNNER_TEMP/tilfazi-release.p12"
             echo "TILFAZI_KEYSTORE_PATH=$RUNNER_TEMP/tilfazi-release.p12" >> "$GITHUB_ENV"
-          fi
-      - name: Build signed release if signing secrets exist; otherwise diagnostic debug
-        run: |
-          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
-            gradle :app:assembleRelease :app:lintRelease --stacktrace
           else
-            gradle :app:assembleDebug :app:lintDebug --stacktrace
+            echo 'No trusted signer configured: unsigned QA output only. No installable APK is published.'
           fi
-      - name: Prepare unsigned non-debuggable release APK for secure offline signing
-        run: |
-          if [ -z "${TILFAZI_KEYSTORE_PATH:-}" ]; then
-            gradle :app:assembleRelease :app:lintRelease --stacktrace
-            test -s app/build/outputs/apk/release/app-release-unsigned.apk
-          fi
-      - name: Verify output and pinned release certificate
-        run: |
-          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
-            APK=app/build/outputs/apk/release/app-release.apk
-          else
-            APK=app/build/outputs/apk/debug/app-debug.apk
-          fi
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 8
-          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
-            python3 tools/verify_stable_signer.py "$APK"
-          else
-            echo 'QA ONLY: Debug APK cannot replace old APKs signed by another certificate.'
-          fi
-
-      # QA only: do not publish or overwrite an Android release while
-      # streaming validation on actual devices remains incomplete.
-      - name: Gate package and stable signing identity
+      - name: Compile release and run Android lint
+        run: gradle :app:assembleRelease :app:lintRelease --stacktrace
+      - name: Verify package identity and signing certificate
         run: |
           set -euo pipefail
-          if [ -z "${TILFAZI_KEYSTORE_PATH:-}" ]; then
-            echo "QA build only: release signing secrets are not configured."
-            exit 0
-          fi
-          APK=app/build/outputs/apk/release/app-release.apk
           TOOL="$ANDROID_HOME/build-tools/35.0.0"
-          EXPECTED=E57ED675F64CB3CD3600F92E57B7D832F07B4310D5BEFA667BF7793857EF2421
-          ACTUAL=$("$TOOL/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:upper:]')
-          test "$ACTUAL" = "$EXPECTED" || { echo "ERROR: Release certificate mismatch. Stop distribution."; exit 1; }
-          "$TOOL/aapt" dump badging "$APK" | grep -q "package: name='com.mazentv.live' versionCode='14'"
-          echo "Verified: stable certificate, package name and expected version code."
-
-      - name: Save unsigned release build for secure local signing
-        if: env.TILFAZI_KEYSTORE_PATH == ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tilfazi-LIVE-release-unsigned-for-private-signing
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
-          if-no-files-found: error
-      - name: Save signed APK only when stable key secrets are configured
+          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
+            APK=app/build/outputs/apk/release/app-release.apk
+            "$TOOL/apksigner" verify --verbose "$APK"
+            BADGING=$("$TOOL/aapt" dump badging "$APK")
+            printf '%s\n' "$BADGING" | grep -q "package: name='com.mazentv.live'"
+            PIN=$(tr -d '\r\n ' < tools/release_signer_sha256.txt)
+            ACTUAL=$("$TOOL/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:upper:]')
+            if [ "$ACTUAL" != "$PIN" ]; then echo 'REJECTED: signing certificate changed'; exit 1; fi
+            echo 'PASS: approved signing key and package identity.'
+          else
+            test -s app/build/outputs/apk/release/app-release-unsigned.apk
+            echo 'UNSIGNED QA ONLY: not installable and not an upgrade.'
+          fi
+      - name: Upload verified stable-signed APK only
         if: env.TILFAZI_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
-          name: Tilfazi-LIVE-stable-signed-release
+          name: tilfazi-verified-stable-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-      - name: Save diagnostic debug APK (not eligible for normal upgrades)
+      - name: Upload unsigned QA artifact only
         if: env.TILFAZI_KEYSTORE_PATH == ''
         uses: actions/upload-artifact@v4
         with:
-          name: Tilfazi-LIVE-debug-diagnostic-only
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: tilfazi-unsigned-qa-not-installable
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
