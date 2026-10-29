@@ -50,7 +50,7 @@ jobs:
             gradle :app:assembleRelease :app:lintRelease --stacktrace
             test -s app/build/outputs/apk/release/app-release-unsigned.apk
           fi
-      - name: Verify output
+      - name: Verify output and pinned release certificate
         run: |
           if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
             APK=app/build/outputs/apk/release/app-release.apk
@@ -59,6 +59,11 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 8
+          if [ -n "${TILFAZI_KEYSTORE_PATH:-}" ]; then
+            python3 tools/verify_stable_signer.py "$APK"
+          else
+            echo 'QA ONLY: Debug APK cannot replace old APKs signed by another certificate.'
+          fi
 
       # QA only: do not publish or overwrite an Android release while
       # streaming validation on actual devices remains incomplete.
