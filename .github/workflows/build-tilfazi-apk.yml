@@ -61,6 +61,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 8
 
       - name: Prepare public APK download
+        if: env.TILFAZI_KEYSTORE_PATH != ''
         run: |
           mkdir -p public-download
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
@@ -70,6 +71,7 @@ jobs:
           fi
           test -s public-download/Tilfazi-LIVE-3.3.1.apk
       - name: Publish APK as a downloadable GitHub release
+        if: env.TILFAZI_KEYSTORE_PATH != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -87,8 +89,17 @@ jobs:
           name: Tilfazi-LIVE-release-unsigned-for-private-signing
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - name: Save signed APK only when stable key secrets are configured
+        if: env.TILFAZI_KEYSTORE_PATH != ''
+        uses: actions/upload-artifact@v4
         with:
-          name: Tilfazi-LIVE-installable-apk
-          path: app/build/outputs/apk/**/*.apk
+          name: Tilfazi-LIVE-stable-signed-release
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - name: Save diagnostic debug APK (not eligible for normal upgrades)
+        if: env.TILFAZI_KEYSTORE_PATH == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tilfazi-LIVE-debug-diagnostic-only
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
