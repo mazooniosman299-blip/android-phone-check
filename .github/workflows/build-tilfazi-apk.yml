@@ -5,7 +5,7 @@ on:
     branches: [tilfazi-live-app]
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -18,10 +18,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install build components
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Check preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
+          test -d "$ANDROID_HOME/build-tools/35.0.0" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
