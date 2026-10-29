@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
     env:
       TILFAZI_SIGNING_STORE_B64: ${{ secrets.TILFAZI_SIGNING_STORE_B64 }}
       TILFAZI_STORE_PASSWORD: ${{ secrets.TILFAZI_STORE_PASSWORD }}
@@ -53,6 +53,27 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 8
+
+      - name: Prepare public APK download
+        run: |
+          mkdir -p public-download
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk public-download/Tilfazi-LIVE-3.3.0.apk
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk public-download/Tilfazi-LIVE-3.3.0.apk
+          fi
+          test -s public-download/Tilfazi-LIVE-3.3.0.apk
+      - name: Publish APK as a downloadable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=tilfazi-v3.3.0
+          ASSET=public-download/Tilfazi-LIVE-3.3.0.apk
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "Tilfazi LIVE 3.3.0" --notes "Installable Android app, v3.3.0. Zee Alwan playback through the official STARZPLAY web player remains region/provider-dependent. Some channels require authorization. Debug-signed builds cannot upgrade over an APK signed by a different certificate."
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: Tilfazi-LIVE-installable-apk
