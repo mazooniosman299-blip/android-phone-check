@@ -15,8 +15,11 @@ jobs:
       TILFAZI_KEY_ALIAS: ${{ secrets.TILFAZI_KEY_ALIAS }}
     steps:
       - uses: actions/checkout@v4
-      - name: Extract project
-        run: tar -xJf project.tar.xz
+      - name: Extract validated 3.4.4 modernization project
+        run: |
+          base64 -d project_3_4_4_source.tar.xz.b64 > project.tar.xz
+          tar -xJf project.tar.xz
+          grep -q "versionName '3.4.4'" app/build.gradle
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
