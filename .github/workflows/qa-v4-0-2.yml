@@ -46,6 +46,39 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.mazentv.live'"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$APK"
           echo "QA-only debug APK compiled; not approved for upgrades or release."
+      - name: Allow KVM acceleration for Android emulator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Android 15 emulator smoke test (launch, UI, and crash detection)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            adb install -r app-source/app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
+            adb shell am start -W -n com.mazentv.live/.MainActivity
+            sleep 15
+            PID="$(adb shell pidof com.mazentv.live | tr -d '\r')"
+            test -n "$PID" || { echo 'FAIL: Tilfazi process exited after launch'; exit 1; }
+            adb shell dumpsys activity activities | grep -q 'com.mazentv.live' || { echo 'FAIL: app was not launched'; exit 1; }
+            adb shell uiautomator dump /sdcard/tilfazi-ui.xml >/dev/null
+            adb shell cat /sdcard/tilfazi-ui.xml | grep -q 'com.mazentv.live' || { echo 'FAIL: main activity UI inaccessible'; exit 1; }
+            adb logcat -d -v brief > android-log.txt
+            if grep -A 10 'FATAL EXCEPTION' android-log.txt | grep -q 'com.mazentv.live'; then
+              echo 'FAIL: app has a fatal exception'; exit 1
+            fi
+            echo 'PASS: Android 15 emulator installed and launched app, UI present, no observed crash.'
+      - name: Retain emulator diagnostics only when QA fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tilfazi-402-emulator-failure-logs
+          path: android-log.txt
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: tilfazi-v4-0-2-unsigned-release-blocked-debug-QA
