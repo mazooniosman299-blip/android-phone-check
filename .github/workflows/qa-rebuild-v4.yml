@@ -24,6 +24,10 @@ jobs:
       - name: Android SDK 36
         run: |
           test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
+      - name: Install FFmpeg for real media decoding fixture tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Pure JVM, structure, and decoded-media tests
         run: RUN_MEDIA_TESTS=1 sh tests/run_all.sh
       - name: Android compile and lint
