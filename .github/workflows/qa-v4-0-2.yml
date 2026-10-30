@@ -1,0 +1,54 @@
+name: Tilfazi 4.0.2 Android QA (no release)
+on:
+  workflow_dispatch:
+  push:
+    branches: [tilfazi-v4-quality-qa]
+    paths:
+      - 'project_4_0_2_QA.tar.xz.b64'
+      - '.github/workflows/qa-v4-0-2.yml'
+jobs:
+  qa:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract isolated 4.0.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app-source
+          base64 -d project_4_0_2_QA.tar.xz.b64 | tar -xJf - -C app-source
+          test -f app-source/app/build.gradle
+          grep -q "versionName '4.0.2-qa'" app-source/app/build.gradle
+          echo "Source extracted; no release keys are present."
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Android SDK platform 36
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
+      - name: Run source regression suite
+        working-directory: app-source
+        run: sh tests/run_all.sh
+      - name: Compile Android debug and run lint
+        working-directory: app-source
+        run: gradle :app:assembleDebug :app:lintDebug --stacktrace
+      - name: Check APK package and output
+        run: |
+          set -euo pipefail
+          APK=app-source/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.mazentv.live'"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$APK"
+          echo "QA-only debug APK compiled; not approved for upgrades or release."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tilfazi-v4-0-2-unsigned-release-blocked-debug-QA
+          path: app-source/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+          if-no-files-found: error
