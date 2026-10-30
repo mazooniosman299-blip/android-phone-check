@@ -57,7 +57,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
           script: |
-            set -euo pipefail
+            set -eu
             adb install -r app-source/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
             adb shell am start -W -n com.mazentv.live/.MainActivity
