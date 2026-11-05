@@ -1,0 +1,77 @@
+name: Isolated Salati 1.0.132 AAB + production AdMob check (NO DEPLOY)
+on:
+  push:
+    branches:
+      - build/salati-aab-1-0-132-admob-20261106
+    paths:
+      - .github/workflows/salati-aab-132-isolated.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-unsigned-for-offline-original-key-signing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain exact Salati production source; never touch production repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch --branch production --filter=blob:none https://github.com/mazooniosman299-blip/salati-app.git salati
+          cd salati
+          test "$(git rev-parse HEAD)" = "a35d26031a3cec39c633412a76efb258db4d6470"
+          test "$(cat apk-release-parts/current.json | tr -d '\n ' | grep -F '"version":"1.0.132"')" != ""
+          grep -Fx 'appId=ca-app-pub-5086201923236113~9061219837' android/admob-publisher.properties
+          grep -Fx 'bannerId=ca-app-pub-5086201923236113/5898413609' android/admob-publisher.properties
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Ensure Android platform and build-tools 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_MANAGER="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          "$SDK_MANAGER" "platforms;android-36" "build-tools;36.0.0" >/dev/null
+      - name: Build from source without modifying source repository
+        working-directory: salati
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          python3 scripts/prepare-android.py
+      - name: Build unsigned release AAB with REAL publisher AdMob module
+        working-directory: salati/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash gradlew :app:bundleRelease -x verifyReleaseSigningIdentity --no-daemon -PsalatiAdsMode=production -PsalatiVersionCode=133 -PsalatiVersionName=1.0.132
+          test -s app/build/outputs/bundle/release/app-release.aab
+      - name: Verify packaged classes for AdMob, UMP and bridge
+        working-directory: salati
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE=android/app/build/outputs/bundle/release/app-release.aab
+          mkdir -p "$RUNNER_TEMP/salati-dex"
+          unzip -qq "$BUNDLE" 'base/dex/*' -d "$RUNNER_TEMP/salati-dex"
+          grep -arlF 'com/google/android/gms/ads/MobileAds' "$RUNNER_TEMP/salati-dex/base/dex"
+          grep -arlF 'com/google/android/ump/UserMessagingPlatform' "$RUNNER_TEMP/salati-dex/base/dex"
+          grep -arlF 'com/salati/ads/AdsController' "$RUNNER_TEMP/salati-dex/base/dex"
+          unzip -l "$BUNDLE" | grep -F 'base/manifest/AndroidManifest.xml'
+          sha256sum "$BUNDLE" > android/app/build/outputs/bundle/release/unsigned-aab.sha256
+          echo 'PASS: Production-mode AdMob and UMP classes are inside the generated AAB.'
+      - name: Upload unsigned AAB for offline original-keystore signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: salati-132-production-admob-unsigned-aab
+          path: |
+            salati/android/app/build/outputs/bundle/release/app-release.aab
+            salati/android/app/build/outputs/bundle/release/unsigned-aab.sha256
+          if-no-files-found: error
+          retention-days: 1
